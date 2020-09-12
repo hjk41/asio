@@ -2,7 +2,7 @@
 // impl/spawn.hpp
 // ~~~~~~~~~~~~~~
 //
-// Copyright (c) 2003-2017 Christopher M. Kohlhoff (chris at kohlhoff dot com)
+// Copyright (c) 2003-2020 Christopher M. Kohlhoff (chris at kohlhoff dot com)
 //
 // Distributed under the Boost Software License, Version 1.0. (See accompanying
 // file LICENSE_1_0.txt or copy at http://www.boost.org/LICENSE_1_0.txt)
@@ -109,19 +109,29 @@ namespace detail {
   };
 
   template <typename Handler, typename T>
-  inline void* asio_handler_allocate(std::size_t size,
+  inline asio_handler_allocate_is_deprecated
+  asio_handler_allocate(std::size_t size,
       coro_handler<Handler, T>* this_handler)
   {
+#if defined(ASIO_NO_DEPRECATED)
+    asio_handler_alloc_helpers::allocate(size, this_handler->handler_);
+    return asio_handler_allocate_is_no_longer_used();
+#else // defined(ASIO_NO_DEPRECATED)
     return asio_handler_alloc_helpers::allocate(
         size, this_handler->handler_);
+#endif // defined(ASIO_NO_DEPRECATED)
   }
 
   template <typename Handler, typename T>
-  inline void asio_handler_deallocate(void* pointer, std::size_t size,
+  inline asio_handler_deallocate_is_deprecated
+  asio_handler_deallocate(void* pointer, std::size_t size,
       coro_handler<Handler, T>* this_handler)
   {
     asio_handler_alloc_helpers::deallocate(
         pointer, size, this_handler->handler_);
+#if defined(ASIO_NO_DEPRECATED)
+    return asio_handler_deallocate_is_no_longer_used();
+#endif // defined(ASIO_NO_DEPRECATED)
   }
 
   template <typename Handler, typename T>
@@ -131,19 +141,27 @@ namespace detail {
   }
 
   template <typename Function, typename Handler, typename T>
-  inline void asio_handler_invoke(Function& function,
+  inline asio_handler_invoke_is_deprecated
+  asio_handler_invoke(Function& function,
       coro_handler<Handler, T>* this_handler)
   {
     asio_handler_invoke_helpers::invoke(
         function, this_handler->handler_);
+#if defined(ASIO_NO_DEPRECATED)
+    return asio_handler_invoke_is_no_longer_used();
+#endif // defined(ASIO_NO_DEPRECATED)
   }
 
   template <typename Function, typename Handler, typename T>
-  inline void asio_handler_invoke(const Function& function,
+  inline asio_handler_invoke_is_deprecated
+  asio_handler_invoke(const Function& function,
       coro_handler<Handler, T>* this_handler)
   {
     asio_handler_invoke_helpers::invoke(
         function, this_handler->handler_);
+#if defined(ASIO_NO_DEPRECATED)
+    return asio_handler_invoke_is_no_longer_used();
+#endif // defined(ASIO_NO_DEPRECATED)
   }
 
   template <typename Handler, typename T>
@@ -244,7 +262,7 @@ public:
   explicit async_result(
     typename detail::coro_async_result<Handler,
       typename decay<Arg1>::type>::completion_handler_type& h)
-    : detail::coro_async_result<Handler, Arg1>(h)
+    : detail::coro_async_result<Handler, typename decay<Arg1>::type>(h)
   {
   }
 };
@@ -272,55 +290,10 @@ public:
   explicit async_result(
     typename detail::coro_async_result<Handler,
       typename decay<Arg2>::type>::completion_handler_type& h)
-    : detail::coro_async_result<Handler, Arg2>(h)
+    : detail::coro_async_result<Handler, typename decay<Arg2>::type>(h)
   {
   }
 };
-
-#if !defined(ASIO_NO_DEPRECATED)
-
-template <typename Handler, typename ReturnType>
-struct handler_type<basic_yield_context<Handler>, ReturnType()>
-{
-  typedef detail::coro_handler<Handler, void> type;
-};
-
-template <typename Handler, typename ReturnType, typename Arg1>
-struct handler_type<basic_yield_context<Handler>, ReturnType(Arg1)>
-{
-  typedef detail::coro_handler<Handler, typename decay<Arg1>::type> type;
-};
-
-template <typename Handler, typename ReturnType>
-struct handler_type<basic_yield_context<Handler>,
-    ReturnType(asio::error_code)>
-{
-  typedef detail::coro_handler<Handler, void> type;
-};
-
-template <typename Handler, typename ReturnType, typename Arg2>
-struct handler_type<basic_yield_context<Handler>,
-    ReturnType(asio::error_code, Arg2)>
-{
-  typedef detail::coro_handler<Handler, typename decay<Arg2>::type> type;
-};
-
-template <typename Handler, typename T>
-class async_result<detail::coro_handler<Handler, T> >
-  : public detail::coro_async_result<Handler, T>
-{
-public:
-  typedef typename detail::coro_async_result<Handler, T>::return_type type;
-
-  explicit async_result(
-    typename detail::coro_async_result<Handler,
-      void>::completion_handler_type& h)
-    : detail::coro_async_result<Handler, T>(h)
-  {
-  }
-};
-
-#endif // !defined(ASIO_NO_DEPRECATED)
 
 template <typename Handler, typename T, typename Allocator>
 struct associated_allocator<detail::coro_handler<Handler, T>, Allocator>
@@ -351,11 +324,12 @@ namespace detail {
   template <typename Handler, typename Function>
   struct spawn_data : private noncopyable
   {
-    spawn_data(ASIO_MOVE_ARG(Handler) handler,
-        bool call_handler, ASIO_MOVE_ARG(Function) function)
-      : handler_(ASIO_MOVE_CAST(Handler)(handler)),
+    template <typename Hand, typename Func>
+    spawn_data(ASIO_MOVE_ARG(Hand) handler,
+        bool call_handler, ASIO_MOVE_ARG(Func) function)
+      : handler_(ASIO_MOVE_CAST(Hand)(handler)),
         call_handler_(call_handler),
-        function_(ASIO_MOVE_CAST(Function)(function))
+        function_(ASIO_MOVE_CAST(Func)(function))
     {
     }
 
@@ -388,6 +362,20 @@ namespace detail {
   template <typename Handler, typename Function>
   struct spawn_helper
   {
+    typedef typename associated_allocator<Handler>::type allocator_type;
+
+    allocator_type get_allocator() const ASIO_NOEXCEPT
+    {
+      return (get_associated_allocator)(data_->handler_);
+    }
+
+    typedef typename associated_executor<Handler>::type executor_type;
+
+    executor_type get_executor() const ASIO_NOEXCEPT
+    {
+      return (get_associated_executor)(data_->handler_);
+    }
+
     void operator()()
     {
       typedef typename basic_yield_context<Handler>::callee_type callee_type;
@@ -402,19 +390,27 @@ namespace detail {
   };
 
   template <typename Function, typename Handler, typename Function1>
-  inline void asio_handler_invoke(Function& function,
+  inline asio_handler_invoke_is_deprecated
+  asio_handler_invoke(Function& function,
       spawn_helper<Handler, Function1>* this_handler)
   {
     asio_handler_invoke_helpers::invoke(
         function, this_handler->data_->handler_);
+#if defined(ASIO_NO_DEPRECATED)
+    return asio_handler_invoke_is_no_longer_used();
+#endif // defined(ASIO_NO_DEPRECATED)
   }
 
   template <typename Function, typename Handler, typename Function1>
-  inline void asio_handler_invoke(const Function& function,
+  inline asio_handler_invoke_is_deprecated
+  asio_handler_invoke(const Function& function,
       spawn_helper<Handler, Function1>* this_handler)
   {
     asio_handler_invoke_helpers::invoke(
         function, this_handler->data_->handler_);
+#if defined(ASIO_NO_DEPRECATED)
+    return asio_handler_invoke_is_no_longer_used();
+#endif // defined(ASIO_NO_DEPRECATED)
   }
 
   inline void default_spawn_handler() {}
@@ -437,25 +433,22 @@ template <typename Handler, typename Function>
 void spawn(ASIO_MOVE_ARG(Handler) handler,
     ASIO_MOVE_ARG(Function) function,
     const boost::coroutines::attributes& attributes,
-    typename enable_if<!is_executor<typename decay<Handler>::type>::value &&
+    typename enable_if<
+      !is_executor<typename decay<Handler>::type>::value &&
+      !execution::is_executor<typename decay<Handler>::type>::value &&
       !is_convertible<Handler&, execution_context&>::value>::type*)
 {
   typedef typename decay<Handler>::type handler_type;
+  typedef typename decay<Function>::type function_type;
 
-  typename associated_executor<handler_type>::type ex(
-      (get_associated_executor)(handler));
-
-  typename associated_allocator<handler_type>::type a(
-      (get_associated_allocator)(handler));
-
-  detail::spawn_helper<handler_type, Function> helper;
+  detail::spawn_helper<handler_type, function_type> helper;
   helper.data_.reset(
-      new detail::spawn_data<handler_type, Function>(
+      new detail::spawn_data<handler_type, function_type>(
         ASIO_MOVE_CAST(Handler)(handler), true,
         ASIO_MOVE_CAST(Function)(function)));
   helper.attributes_ = attributes;
 
-  ex.dispatch(helper, a);
+  asio::dispatch(helper);
 }
 
 template <typename Handler, typename Function>
@@ -463,29 +456,27 @@ void spawn(basic_yield_context<Handler> ctx,
     ASIO_MOVE_ARG(Function) function,
     const boost::coroutines::attributes& attributes)
 {
+  typedef typename decay<Function>::type function_type;
+
   Handler handler(ctx.handler_); // Explicit copy that might be moved from.
 
-  typename associated_executor<Handler>::type ex(
-      (get_associated_executor)(handler));
-
-  typename associated_allocator<Handler>::type a(
-      (get_associated_allocator)(handler));
-
-  detail::spawn_helper<Handler, Function> helper;
+  detail::spawn_helper<Handler, function_type> helper;
   helper.data_.reset(
-      new detail::spawn_data<Handler, Function>(
+      new detail::spawn_data<Handler, function_type>(
         ASIO_MOVE_CAST(Handler)(handler), false,
         ASIO_MOVE_CAST(Function)(function)));
   helper.attributes_ = attributes;
 
-  ex.dispatch(helper, a);
+  asio::dispatch(helper);
 }
 
 template <typename Function, typename Executor>
 inline void spawn(const Executor& ex,
     ASIO_MOVE_ARG(Function) function,
     const boost::coroutines::attributes& attributes,
-    typename enable_if<is_executor<Executor>::value>::type*)
+    typename enable_if<
+      is_executor<Executor>::value || execution::is_executor<Executor>::value
+    >::type*)
 {
   asio::spawn(asio::strand<Executor>(ex),
       ASIO_MOVE_CAST(Function)(function), attributes);
@@ -501,6 +492,8 @@ inline void spawn(const strand<Executor>& ex,
       ASIO_MOVE_CAST(Function)(function), attributes);
 }
 
+#if !defined(ASIO_NO_TS_EXECUTORS)
+
 template <typename Function>
 inline void spawn(const asio::io_context::strand& s,
     ASIO_MOVE_ARG(Function) function,
@@ -510,6 +503,8 @@ inline void spawn(const asio::io_context::strand& s,
         s, &detail::default_spawn_handler),
       ASIO_MOVE_CAST(Function)(function), attributes);
 }
+
+#endif // !defined(ASIO_NO_TS_EXECUTORS)
 
 template <typename Function, typename ExecutionContext>
 inline void spawn(ExecutionContext& ctx,
